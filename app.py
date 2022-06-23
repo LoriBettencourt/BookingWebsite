@@ -16,21 +16,19 @@ from forms import *
 from flask_migrate import Migrate
 import sys
 from sqlalchemy.dialects import postgresql
+
 #----------------------------------------------------------------------------#
 # App Config.
 #----------------------------------------------------------------------------#
 
+from models import db, Venue, Artist, Show
 app = Flask(__name__)
 moment = Moment(app)
 app.config.from_object('config')
 
-# TODO: connect to a local postgresql database
-
-db = SQLAlchemy(app)
-# or db.init_app(app)
-
+# # TODO: connect to a local postgresql database
+db.init_app(app)
 migrate = Migrate(app, db)
-
 
 #----------------------------------------------------------------------------#
 # Filters.
@@ -48,64 +46,7 @@ def format_datetime(value, format='medium'):
 
 app.jinja_env.filters['datetime'] = format_datetime
 
-#----------------------------------------------------------------------------#
-# Models.
-#----------------------------------------------------------------------------#
 
-
-class Venue(db.Model):
-    __tablename__ = 'venues'
-
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String, nullable=False)
-    city = db.Column(db.String(120), nullable=False)
-    # This is a dropdown. S/b nullable=false anyway?
-    state = db.Column(db.String(120))
-    address = db.Column(db.String(120), nullable=False)
-    phone = db.Column(db.String(120), nullable=False)
-    genres = db.Column(db.ARRAY(db.String), nullable=False)
-    image_link = db.Column(db.String(500))
-    website_link = db.Column(db.String(500))
-    facebook_link = db.Column(db.String(120))
-    # Revisit this. Had false but saw True in another file
-    looking_for_talent = db.Column(db.Boolean, default=True)
-    description = db.Column(db.String(500))
-    shows = db.relationship('Show', backref='venue',
-                            lazy=True, cascade='all, delete-orphan')
-
-    # TODO: implement any missing fields, as a database migration using Flask-Migrate
-
-
-class Artist(db.Model):
-    __tablename__ = 'artists'
-
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String)
-    city = db.Column(db.String(120), nullable=False)
-    state = db.Column(db.String(120))
-    phone = db.Column(db.String(120))
-    image_link = db.Column(db.String(500))
-    website_link = db.Column(db.String(500))
-    genres = db.Column(db.ARRAY(db.String(120)), nullable=False)
-    facebook_link = db.Column(db.String(120))
-    seeking_venue = db.Column(db.Boolean, default=True)
-    seeking_description = db.Column(db.String(500))
-    shows = db.relationship('Show', backref='artist',
-                            lazy=True, cascade='all, delete-orphan')
-
-    # TODO: implement any missing fields, as a database migration using Flask-Migrate
-
-# TODO Implement Show and Artist models, and complete all model relationships and properties, as a database migration.
-
-
-class Show(db.Model):
-    __tablename__ = 'shows'
-    id = db.Column(db.Integer, primary_key=True)
-    artist_id = db.Column(db.Integer, db.ForeignKey(
-        'artists.id'), nullable=False)
-    venue_id = db.Column(db.Integer, db.ForeignKey(
-        'venues.id'), nullable=False)
-    show_date_time = db.Column(db.DateTime())
 
 
 #----------------------------------------------------------------------------#
@@ -158,8 +99,6 @@ def search_venues():
     # search for "Music" should return "The Musical Hop" and "Park Square Live Music & Coffee"
 
     search_term = request.form.get('search_term', '')
-    print("search_term:")
-    print(search_term)
     search_on = Venue.query.filter(
         Venue.name.ilike(f'%{search_term}%') |
         Venue.city.ilike(f'%{search_term}%') |
@@ -176,8 +115,6 @@ def search_venues():
         venue['num_upcoming_shows'] = len(
             [num_shows for num_shows in search.shows if num_shows.show_date_time > datetime.now()])
         response['data'].append(venue)
-    print("response")
-    print(response)
 
     return render_template('pages/search_venues.html', results=response, search_term=request.form.get('search_term', ''))
 
@@ -189,10 +126,6 @@ def show_venue(venue_id):
 
     data = {}
     venue_data = Venue.query.get(venue_id)
-    past_show_data = list(
-        filter(lambda show: show.show_date_time < datetime.now(), venue_data.shows))
-    future_show_data = list(
-        filter(lambda show: show.show_date_time > datetime.now(), venue_data.shows))
 
     data['id'] = venue_data.id
     data['name'] = venue_data.name
@@ -207,25 +140,26 @@ def show_venue(venue_id):
     data['seeking_description'] = venue_data.description
     data['image_link'] = venue_data.image_link
 
+    artist_data = venue_data.shows
+
     past_show_list = []
-    for show in past_show_data:
-        past_show_list.append({
-            'artist_id': show.artist.id,
-            'artist_name': show.artist.name,
-            'artist_image_link': show.artist.image_link,
-            'start_time': str(show.show_date_time)
-        })
+    future_show_list = []
+    for ind_artist in artist_data:
+        show_time = ind_artist.show_date_time
+        artist_info = {
+            'artist_id': ind_artist.artist.id,
+            'artist_name': ind_artist.artist.name,
+            'artist_image_link': ind_artist.artist.image_link,
+            'start_time': str(show_time)
+        }
+        if show_time < datetime.now():
+            past_show_list.append(artist_info)
+        else:
+            future_show_list.append(artist_info)
+
     data['past_shows'] = past_show_list
     data['past_shows_count'] = len(past_show_list)
 
-    future_show_list = []
-    for show in future_show_data:
-        future_show_list.append({
-            'artist_id': show.artist.id,
-            'artist_name': show.artist.name,
-            'artist_image_link': show.artist.image_link,
-            'start_time': str(show.show_date_time)
-        })
     data['upcoming_shows'] = future_show_list
     data['upcoming_shows_count'] = len(future_show_list)
 
@@ -288,8 +222,7 @@ def delete_venue(venue_id):
     # TODO: Complete this endpoint for taking a venue_id, and using
     # SQLAlchemy ORM to delete a record. Handle cases where the session commit could fail.
     error = False
-    print("inside delete venue and venue_id is")
-    print(venue_id)
+
     try:
         venue = Venue.query.get(venue_id)
         db.session.delete(venue)
@@ -356,11 +289,7 @@ def show_artist(artist_id):
 
     data = {}
     artist_data = Artist.query.get(artist_id)
-    past_show_data = list(
-        filter(lambda show: show.show_date_time < datetime.now(), artist_data.shows))
-    future_show_data = list(
-        filter(lambda show: show.show_date_time > datetime.now(), artist_data.shows))
-
+  
     data['id'] = artist_data.id
     data['name'] = artist_data.name
     data['genres'] = artist_data.genres
@@ -373,25 +302,27 @@ def show_artist(artist_id):
     data['seeking_description'] = artist_data.seeking_description
     data['image_link'] = artist_data.image_link
 
+    venue_data = artist_data.shows
+
     past_show_list = []
-    for show in past_show_data:
-        past_show_list.append({
-            'venue_id': show.venue.id,
-            'venue_name': show.venue.name,
-            'venue_image_link': show.venue.image_link,
-            'start_time': str(show.show_date_time)
-        })
+    future_show_list = []
+
+    for ind_venue in venue_data:
+        show_time = ind_venue.show_date_time
+        venue_info = {
+            'venue_id': ind_venue.venue.id,
+            'venue_name': ind_venue.venue.name,
+            'venue_image_link': ind_venue.venue.image_link,
+            'start_time': str(show_time)
+        }
+        if show_time < datetime.now():
+            past_show_list.append(venue_info)
+        else:
+            future_show_list.append(venue_info)
+
     data['past_shows'] = past_show_list
     data['past_shows_count'] = len(past_show_list)
 
-    future_show_list = []
-    for show in future_show_data:
-        future_show_list.append({
-            'venue_id': show.venue.id,
-            'venue_name': show.venue.name,
-            'venue_image_link': show.venue.image_link,
-            'start_time': str(show.show_date_time)
-        })
     data['upcoming_shows'] = future_show_list
     data['upcoming_shows_count'] = len(future_show_list)
 
